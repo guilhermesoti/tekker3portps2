@@ -19,6 +19,8 @@
 
 /* Liga o log em 'caminho' (o arquivo é recriado vazio). 1 = ok. */
 int  kit_log_iniciar(const char *caminho);
+/* Sem log: descarta tudo que for para o stdout (não chama o IOP). */
+void kit_log_silenciar(void);
 /* Grava o que está no buffer. 1 = ok ou nada a gravar. */
 int  kit_log_gravar(void);
 /* Texto curto para um painel: "LOG OK 12345" / "LOG ERRO ABRIR -5" / "LOG DESLIGADO". */

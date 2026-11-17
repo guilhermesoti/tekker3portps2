@@ -39,6 +39,23 @@ static void erro(const char *passo, int codigo)
     snprintf(estado, sizeof(estado), "LOG ERRO %s %d", passo, codigo);
 }
 
+/* Sem log: o stdout vira um "ralo" (formata e descarta), em vez de mandar
+ * cada linha para o IOP. */
+static ssize_t descartar(void *cookie, const char *dados, size_t n)
+{
+    (void)cookie; (void)dados;
+    return (ssize_t)n;
+}
+void kit_log_silenciar(void)
+{
+    static char b[1024];
+    cookie_io_functions_t f = { NULL, descartar, NULL, NULL };
+    FILE *s = fopencookie(NULL, "w", f);
+    if (!s) return;
+    setvbuf(s, b, _IOFBF, sizeof(b));
+    stdout = s;
+}
+
 int kit_log_iniciar(const char *caminho)
 {
     static char buf_stdio[4096];

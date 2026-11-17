@@ -129,6 +129,16 @@ static Timer tmr[3];
 #define PS2_TMR_RECUPERAR 1
 #endif
 #define TMR_MAX_ATRASO 64u
+/* V43: 1 = descarta os cruzamentos do alvo que acontecem enquanto a própria
+ * callback do timer roda (ver timer_write): 1 IRQ do timer 2 por VBlank, como
+ * no PS1. 0 (padrão) = como na V42. Teste no PCSX2 (V43, luta automática):
+ * com 1 o relógio do round andou 93-97% (sem: 99,2%), porque lá o passo 1 da
+ * lógica termina perto do VBlank seguinte e, sem as IRQs extras, o passo de
+ * recuperação às vezes não roda e o VBlank se perde. Só ligar quando a lista
+ * de desenho sair de dentro da callback (o quadro começaria ~3 ms antes). */
+#ifndef PS2_T2_FIEL
+#define PS2_T2_FIEL 0
+#endif
 static unsigned long t_eventos[3], t_entregues[3], t_descartadas[3];
 static unsigned long t_escritas[3];   /* V37: escritas em modo/alvo/contador */
 unsigned long ps2_timers_escritas(int t) { unsigned long n = t_escritas[t]; t_escritas[t] = 0; return n; }
@@ -215,6 +225,25 @@ static void timer_write(uint32_t off, uint32_t v)
                * se a última conferência foi antes do cruzamento, se perdiam
                * (o Tekken rearma o timer 2 ~600x/s). */
               ps2_timers_poll();
+#if PS2_T2_FIEL
+              /* V43: escrita feita DENTRO da callback deste timer (o Tekken
+               * desarma o timer 2 no fim de 80029784). No PS1 a callback acaba
+               * bem antes do próximo alvo (1,19 ms); no port ela processa a
+               * lista de desenho inteira (~3 ms no console) e o timer, ainda
+               * em modo repetir, cruzava o alvo de novo: a IRQ voltava 3-4
+               * vezes por quadro e cada volta somava 1 no contador 8009BC5C
+               * (linha do tempo V42: 4-5 no teste 800295F4, no PS1 no máximo 2).
+               * Esses cruzamentos não existem no PS1: são descartados. */
+              {   extern unsigned g_ps2_tmr_servindo;
+                  static const unsigned bit[3] = { IRQ_TMR0, IRQ_TMR1, IRQ_TMR2 };
+                  if (g_ps2_tmr_servindo & (1u << t)) {
+                      t_descartadas[t] += tmr[t].atrasadas;
+                      tmr[t].atrasadas = 0;
+                      ps2_irq_ack(bit[t]);
+                  }
+              }
+#endif
+              if (t == 2) { extern void ps2_diag(unsigned, uint32_t); ps2_diag((v & 0x30u) ? 2u : 3u, v); }
               tmr[t].modo = (uint16_t)(v & 0x3FFu); tmr[t].base = agora;
               tmr[t].marcas = 0; tmr[t].irq_marcas = 0; tmr[t].irq_feita = 0; break;
     case 0x8: tmr[t].alvo = (uint16_t)v; timer_sincronizar(t, agora); break;
@@ -267,6 +296,7 @@ void ps2_timers_poll(void)
             tmr[t].atrasadas = TMR_MAX_ATRASO;
         }
         if (tmr[t].atrasadas && !(i_stat & (1u << irq[t]))) {
+            if (t == 2) { extern void ps2_diag(unsigned, uint32_t); ps2_diag(4u, tmr[t].atrasadas); }
             ps2_irq_raise(irq[t]);
             tmr[t].atrasadas--;
             t_entregues[t]++;
@@ -349,9 +379,18 @@ unsigned long g_ps2_redesenhos, g_ps2_otcs;   /* lista grande sem OTC (limpeza d
 static int g_ps2_otc_desde_grande;
 unsigned long g_ps2_redesenhos_pulados;
 /* assinatura da ÚLTIMA lista grande desenhada (ver dma_gpu) */
-static struct { int valida; uint32_t madr, nos, hash, geracao; } sig;
-static struct { int ok; uint32_t madr, nos, hash; } sig_cand;
+static struct { int valida; uint32_t madr, nos, hash, hcab, geracao; } sig;
+static struct { int ok; uint32_t madr, nos, hash, hcab; } sig_cand;
 int dedup_ligado = 1;                   /* 0 = sempre desenha (teste A/B) */
+/* V40: o redesenho igual (mesma OT reenviada no 2º campo) é reconhecido só
+ * pelos CABEÇALHOS dos nós (encadeamento + tamanhos), sem reler todos os
+ * comandos: o hash completo custava ~5% do EE na luta. A limpeza da OT
+ * (DMA6) e qualquer envio para a VRAM já invalidam a referência. Com 1,
+ * volta a comparar também os comandos (V17). */
+#ifndef PS2_DEDUP_CONTEUDO
+#define PS2_DEDUP_CONTEUDO 0
+#endif
+unsigned long g_ps2_dedup_rapido;
 unsigned long g_ps2_nos_percorridos;
 extern uint32_t g_ps2_vram_geracao;
 static uint32_t ultimas_madr[4], ultima_otc_madr, ultima_otc_n;
@@ -421,12 +460,38 @@ static int dma_gpu(uint32_t off, uint32_t madr, uint32_t bcr, uint32_t chcr)
             printf("gpu: DMA linked list com direcao invalida\n");
             return 0;
         }
+#if !PS2_DEDUP_CONTEUDO
+        if (dedup_ligado && sig.valida && sig.madr == a && sig.geracao == g_ps2_vram_geracao) {
+            /* caminho rápido: só os cabeçalhos, no máximo sig.nos nós */
+            uint32_t h = a, k = 0, hc = 2166136261u, c;
+#ifdef _EE
+            uint32_t th0 = ee_count();
+#endif
+            for (;;) {
+                c = ps2_ram_get32(h);
+                hc = (hc ^ c) * 16777619u;
+                if (++k > sig.nos || (c & 0x800000u)) break;
+                h = c & 0x1ffffcu;
+            }
+#ifdef _EE
+            { extern unsigned long long g_prof_gpu_hash; g_prof_gpu_hash += (uint32_t)(ee_count() - th0); }
+#endif
+            g_ps2_nos_percorridos += k;
+            if (k == sig.nos && (c & 0x800000u) && hc == sig.hcab) {
+                g_ps2_redesenhos_pulados++;
+                g_ps2_listas_grandes++;
+                g_ps2_dedup_rapido++;
+                reg_set(off - 8u, 0x00ffffffu, 4);
+                return 1;
+            }
+        }
+#endif
         {
             /*
              * Uma passada pela cadeia (Brent): detecta ciclo, conta os nós e
              * calcula um hash dos cabeçalhos E dos comandos de cada nó.
              */
-            uint32_t t = a, h = a, poder = 1, lam = 0, cnt = 0, hash = 2166136261u;
+            uint32_t t = a, h = a, poder = 1, lam = 0, cnt = 0, hash = 2166136261u, hcab = 2166136261u;
             int ciclo = 0;
 #ifdef _EE
             uint32_t th0 = ee_count();
@@ -434,11 +499,17 @@ static int dma_gpu(uint32_t off, uint32_t madr, uint32_t bcr, uint32_t chcr)
             for (;;) {
                 uint32_t c = ps2_ram_get32(h), n = c >> 24, i, q = h;
                 cnt++;
+                hcab = (hcab ^ c) * 16777619u;
+#if PS2_DEDUP_CONTEUDO
                 hash = (hash ^ c) * 16777619u;
                 for (i = 0; i < n; i++) {
                     q = (q + 4u) & 0x1ffffcu;
                     hash = (hash ^ ps2_ram_get32(q)) * 16777619u;
                 }
+#else
+                (void)n; (void)i; (void)q;
+                hash = hcab;
+#endif
                 if (c & 0x800000u) break;
                 h = c & 0x1ffffcu;
                 if (h == t) { ciclo = 1; break; }
@@ -471,12 +542,13 @@ static int dma_gpu(uint32_t off, uint32_t madr, uint32_t bcr, uint32_t chcr)
                     return 1;
                 }
                 sig.valida = 0;
-                sig_cand.madr = a; sig_cand.nos = cnt; sig_cand.hash = hash; sig_cand.ok = 1;
+                sig_cand.madr = a; sig_cand.nos = cnt; sig_cand.hash = hash; sig_cand.hcab = hcab; sig_cand.ok = 1;
             } else
                 sig_cand.ok = 0;
         }
         ultimas_madr[n_madr++ & 3u] = a;
         pular = ps2_gpu_pular_lista();
+        { extern void ps2_diag(unsigned, uint32_t); ps2_diag(12u, a); }
         for (;;) {
             uint32_t cabecalho, n, i;
             if (++nos > limite) break;
@@ -498,9 +570,10 @@ static int dma_gpu(uint32_t off, uint32_t madr, uint32_t bcr, uint32_t chcr)
             a = cabecalho & 0x1ffffcu;
         }
         ps2_gpu_fim_lista(pular);
+        { extern void ps2_diag(unsigned, uint32_t); ps2_diag(13u, nos); }
         if (sig_cand.ok) {                  /* desenhada agora: vira referência */
             sig.valida = !pular;            /* com pulos do orçamento não vale */
-            sig.madr = sig_cand.madr; sig.nos = sig_cand.nos; sig.hash = sig_cand.hash;
+            sig.madr = sig_cand.madr; sig.nos = sig_cand.nos; sig.hash = sig_cand.hash; sig.hcab = sig_cand.hcab;
             sig.geracao = g_ps2_vram_geracao;
             sig_cand.ok = 0;
         }
@@ -555,7 +628,17 @@ static void dma_ordering_table(uint32_t madr, uint32_t bcr)
     if (n == 0) n = 0x10000u;
     ultima_otc_madr = a; ultima_otc_n = n;
     g_ps2_otc_desde_grande = 1; g_ps2_otcs++;
-    if (sig.valida && a - sig.madr < n * 4u + 4u) sig.valida = 0;
+    { extern void ps2_diag(unsigned, uint32_t); ps2_diag(18u, a); ps2_diag(19u, n); }
+    /* V42: o DMA6 escreve n palavras de MADR para BAIXO (psx-spx, DMA6 OTC):
+     * faixa [a-(n-1)*4, a]. A lista de referência só foi apagada se o início
+     * dela (sig.madr) está nessa faixa: a - sig.madr <= (n-1)*4, ou seja,
+     * a - sig.madr < n*4. Antes era "< n*4+4": as duas OTs do Tekken são
+     * vizinhas (1024 entradas cada, topos 0x0A7584 e 0x0A8584, distância
+     * exatamente n*4), então limpar a OT B invalidava a referência da OT A
+     * sem ela ter sido tocada, e o redesenho seguinte (mesma lista, logo no
+     * início do passo 1 do quadro) era processado inteiro de novo em metade
+     * dos quadros da luta (~4,2 ms no PCSX2, linha do tempo V41d). */
+    if (sig.valida && a - sig.madr < n * 4u) sig.valida = 0;
     if ((n - 1u) * 4u <= a) {
         /* não dá a volta nos 2 MB: escreve direto e marca cada grânulo de
          * 64 bytes uma vez (antes marcava a cada palavra) */

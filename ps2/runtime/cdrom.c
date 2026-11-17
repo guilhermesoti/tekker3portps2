@@ -79,6 +79,7 @@ static int arq_seek(uint32_t lba)
 static void arq_iniciar(void *buf, int bytes)
 {
     g_ps2_cd_leituras_arquivo++;
+    { extern void ps2_diag(unsigned, uint32_t); ps2_diag(23u, (uint32_t)bytes); }   /* V43 */
     pend = 1; pend_feita = 0;
 #ifdef _EE
     if (fx_fd >= 0) {
@@ -105,6 +106,7 @@ static int arq_colher(int esperar)
         else c = fileXioWaitAsync(FXIO_NOWAIT, &r);
         fileXioSetBlockMode(FXIO_WAIT);
         dt = cd_relogio() - t0;
+        if (esperar) { extern void ps2_diag(unsigned, uint32_t); ps2_diag(24u, dt / 295u); }   /* V43 */
         g_ps2_cd_espera += dt;
         if (dt > g_ps2_cd_espera_max) g_ps2_cd_espera_max = dt;
         if (c != FXIO_COMPLETE) return 0;

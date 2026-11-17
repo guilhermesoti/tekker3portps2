@@ -129,12 +129,75 @@ int ps2_som_pular(CPUState *cpu)
 #endif
 }
 
+/* V41: linha do tempo de diagnóstico. Guarda os últimos DIAG_N eventos com o
+ * relógio do EE (294,912 MHz) e despeja alguns quadros da luta no log, para
+ * medir a ordem e a duração exata das etapas (VBlank, timer 2, exceções,
+ * espera do quadro, lógica, listas de desenho, cópia para o GS). */
+#define DIAG_N 16384u   /* V43: 4096 -> 16384 (~4 s da luta: guarda o quadro lento até o relatório) */
+static uint32_t dg_t[DIAG_N], dg_a[DIAG_N];
+static uint8_t  dg_e[DIAG_N];
+static uint32_t dg_i;
+void ps2_diag(unsigned e, uint32_t a)
+{
+#ifdef _EE
+    uint32_t t, k;
+    __asm__ volatile("mfc0 %0, $9" : "=r"(t));
+    k = dg_i++ & (DIAG_N - 1u);
+    dg_t[k] = t; dg_e[k] = (uint8_t)e; dg_a[k] = a;
+#else
+    (void)e; (void)a;
+#endif
+}
+static const char *const dg_nome[] = {
+    "?", "VBLANK", "T2 arma", "T2 desarma", "T2 IRQ", "exc entra", "exc sai",
+    "handler ini", "handler fim", "espera ini", "espera fim", "luta",
+    "lista ini", "lista fim", "copia GS ini", "copia GS fim", "exc saida jogo",
+    "vsync cb", "OTC", "OTC n", "checa recup", "relat ini", "relat fim",
+    "CD le", "CD espera"
+};
+static void diag_despejar_ate(uint32_t fim, unsigned n);
+void ps2_diag_despejar(unsigned n) { diag_despejar_ate(dg_i, n); }
+/* V43: quadro que passou de ~37 ms (perde 1 passo da lógica): guarda onde a
+ * linha do tempo estava; o relatório seguinte despeja os eventos antes dele. */
+static uint32_t dg_lento_fim, dg_lento_ms;
+static unsigned dg_lento_pend, dg_lentos;
+void ps2_diag_despejar_lento(void)
+{
+    if (!dg_lento_pend) return;
+    printf("diag: QUADRO LENTO %lu ms (eventos ate o fim dele)\n", (unsigned long)dg_lento_ms);
+    if (dg_i - dg_lento_fim < DIAG_N - 600u) diag_despejar_ate(dg_lento_fim, 500u);
+    dg_lento_pend = 0;
+}
+static void diag_despejar_ate(uint32_t fim, unsigned n)
+{
+    uint32_t ini, i, t0;
+    if (n > DIAG_N - 1u) n = DIAG_N - 1u;
+    if (fim < n) n = fim;
+    ini = fim - n;
+    t0 = dg_t[ini & (DIAG_N - 1u)];
+    printf("diag: linha do tempo, %u eventos (us desde o primeiro)\n", n);
+    for (i = ini; i != fim; i++) {
+        uint32_t k = i & (DIAG_N - 1u);
+        unsigned e = dg_e[k];
+        printf("diag: %8lu %-14s %08lx\n", (unsigned long)((dg_t[k] - t0) / 295u),
+               e < sizeof(dg_nome) / sizeof(dg_nome[0]) ? dg_nome[e] : "?", (unsigned long)dg_a[k]);
+    }
+}
+void ps2_diag_luta(void) { ps2_diag(11, 0); }
+void ps2_diag_espera_fim(void) { ps2_diag(10, ps2_ram_get32(0x8009bc5cu)); }
+/* V42: 800295F4 = "passaram 2+ IRQs do timer 2 desde o início do quadro?"
+ * (decide o passo de recuperação da lógica, sem desenho). Registra o valor
+ * do contador 8009BC5C que o jogo vai comparar. */
+void ps2_diag_recupera(void) { ps2_diag(20, ps2_ram_get32(0x8009bc5cu)); }
+
 /* V37: período entre entradas na espera do quadro (800296C4), em ciclos do
  * EE (294,912 MHz; 1 VBlank NTSC = 4,92 M). Separa os quadros que couberam em
  * 1 VBlank dos que perderam o VBlank, e guarda o pior. */
 static uint32_t q_ant, q_max, q_n, q_1vb, q_2vb, q_3vb;
+uint32_t g_ps2_quadros_ult;          /* V43: quadros do jogo no último relatório (~2 s) */
 void ps2_quadro_espera(void)
 {
+    ps2_diag(9, ps2_ram_get32(0x8009bc5cu));   /* V41: passos do timer no quadro */
 #ifdef _EE
     uint32_t t, d;
     __asm__ volatile("mfc0 %0, $9" : "=r"(t));
@@ -143,12 +206,18 @@ void ps2_quadro_espera(void)
     if (q_n++ == 0u && q_1vb + q_2vb + q_3vb == 0u) return;   /* 1º do período */
     if (d < 6000000u) q_1vb++;          /* < ~20 ms   */
     else if (d < 11000000u) q_2vb++;    /* < ~37 ms   */
-    else q_3vb++;
+    else {
+        q_3vb++;
+        if (!dg_lento_pend && dg_lentos < 6u && d < 60000000u) {   /* V43 */
+            dg_lento_pend = 1; dg_lentos++; dg_lento_fim = dg_i; dg_lento_ms = d / 294912u;
+        }
+    }
     if (d > q_max) q_max = d;
 #endif
 }
 void ps2_quadro_relatorio(void)
 {
+    g_ps2_quadros_ult = q_n;
     printf("quadros: %lu (1 VBlank %lu, 2 VBlanks %lu, 3+ %lu), pior %lu.%lu ms\n",
            (unsigned long)q_n, (unsigned long)q_1vb, (unsigned long)q_2vb,
            (unsigned long)q_3vb, (unsigned long)(q_max / 294912u),
@@ -169,4 +238,72 @@ void ps2_nat_relatorio(unsigned long long total)
         g_nat_ciclos[k] = 0; g_nat_n[k] = 0; g_nat_max[k] = 0;
     }
     printf("\n");
+}
+
+/* V43: velocidade REAL do jogo pelo relógio do round. 800ADBCC = passos de
+ * 1/60 s que faltam: o jogo põe (x+2)*600 no início (8002A9C8), tira 1 por
+ * passo da lógica (8003CCDC), mostra (t+59)/60 s e com t < 1 dá TIME UP
+ * (8003E478). No PS1 o relógio anda 1 passo por VBlank (59,94 por segundo),
+ * então passos do relógio / VBlanks do PS1 = velocidade do jogo (100% = PS1).
+ * Mede sem cronômetro: do 1º ao último passo do relógio de cada rodada. */
+static int32_t rl_ant;
+static int rl_ativo;
+static uint32_t rl_vb, rl_vb_ult, rl_dec, rl_ee_ant;
+static uint64_t rl_ee, rl_ee_ult;
+static uint32_t rl_jan_dec, rl_jan_vb;
+static char rl_rodada[24] = "-";
+static char rl_painel[64];
+void ps2_relogio_vblank(void)
+{
+    int32_t t = (int32_t)ps2_ram_get32(0x800ADBCCu);
+    int32_t d = rl_ant - t;
+    uint32_t agora = 0;
+#ifdef _EE
+    __asm__ volatile("mfc0 %0, $9" : "=r"(agora));
+#endif
+    if (rl_ativo) {
+        rl_vb++; rl_jan_vb++;
+        rl_ee += (uint32_t)(agora - rl_ee_ant);
+    }
+    rl_ee_ant = agora;
+    if (d > 0 && d <= 8) {
+        if (!rl_ativo) {                 /* 1º passo: começa a medir daqui */
+            rl_ativo = 1; rl_vb = rl_vb_ult = rl_dec = 0; rl_ee = rl_ee_ult = 0;
+        } else {
+            rl_dec += (uint32_t)d; rl_jan_dec += (uint32_t)d;
+            rl_vb_ult = rl_vb; rl_ee_ult = rl_ee;
+        }
+    }
+    if (rl_ativo && (t <= 0 || d < 0 || d > 8 || rl_vb - rl_vb_ult > 180u)) {
+        if (rl_dec >= 600u && rl_vb_ult) {
+            uint32_t pct = (uint32_t)((uint64_t)rl_dec * 10000u / rl_vb_ult);
+            uint32_t ms = (uint32_t)(rl_ee_ult / 294912u);
+            uint32_t ms_ps1 = (uint32_t)((uint64_t)rl_dec * 1000000u / 59940u);
+            printf("rodada: relogio andou %lu passos (%lu.%02lu s de jogo) em %lu VBlanks do PS1 = %lu.%02lu%% "
+                   "| %lu ms reais (no PS1: %lu ms)\n",
+                   (unsigned long)rl_dec, (unsigned long)(rl_dec / 60u), (unsigned long)(rl_dec % 60u * 100u / 60u),
+                   (unsigned long)rl_vb_ult, (unsigned long)(pct / 100u), (unsigned long)(pct % 100u),
+                   (unsigned long)ms, (unsigned long)ms_ps1);
+            snprintf(rl_rodada, sizeof(rl_rodada), "%lu.%lu%% %lus",
+                     (unsigned long)(pct / 100u), (unsigned long)(pct % 100u / 10u), (unsigned long)(rl_dec / 60u));
+        }
+        rl_ativo = 0;
+    }
+    rl_ant = t;
+}
+/* Uma linha por relatório (~2 s) e o texto do painel. */
+const char *ps2_relogio_relatorio(void)
+{
+    char jan[16] = "-";
+    if (rl_jan_vb) {
+        uint32_t pct = (uint32_t)((uint64_t)rl_jan_dec * 1000u / rl_jan_vb);
+        printf("relogio: %lu passos do relogio do round em %lu VBlanks do PS1 (%lu.%lu%%)\n",
+               (unsigned long)rl_jan_dec, (unsigned long)rl_jan_vb,
+               (unsigned long)(pct / 10u), (unsigned long)(pct % 10u));
+        snprintf(jan, sizeof(jan), "%lu.%lu%%", (unsigned long)(pct / 10u), (unsigned long)(pct % 10u));
+    }
+    rl_jan_dec = rl_jan_vb = 0;
+    snprintf(rl_painel, sizeof(rl_painel), "QUADROS/S %lu JOGO %s\nRODADA %s",
+             (unsigned long)(g_ps2_quadros_ult / 2u), jan, rl_rodada);
+    return rl_painel;
 }

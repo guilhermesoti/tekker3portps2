@@ -290,6 +290,9 @@ int main(int argc, char **argv)
                 kit_log_gravar();       /* já deixa o arquivo com tamanho > 0 */
             }
         }
+        /* V43: versão sem log no console: o texto dos relatórios ia para o
+         * IOP (fio, uma chamada por linha) sem ninguém ler; agora é descartado. */
+        if (r == KIT_ARM_OK && PS2_LOG_BLOCOS == 0) kit_log_silenciar();
     }
 
     memset(cpu, 0, sizeof(*cpu));

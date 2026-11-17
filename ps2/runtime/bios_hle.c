@@ -155,8 +155,10 @@ static int      exc_etapa;             /* 0 = vai chamar func1, 1 = chamou func1
 static int      cb_etapa_salva = -1;
 static uint32_t cb_v0_salvo;
 
+extern void ps2_diag(unsigned, uint32_t);
 static void chamar_jogo(CPUState *cpu, uint32_t func, uint32_t a0)
 {
+    ps2_diag(7u, func);
     cpu->gpr[4]  = a0;
     cpu->gpr[29] = PILHA_EXC;
     cpu->gpr[31] = RET_MAGICO;
@@ -231,8 +233,14 @@ static void continuar_excecao(CPUState *cpu)
     }
 }
 
+/* V43: timers cuja IRQ esta exceção está atendendo (bit t). io.c usa para
+ * reconhecer a escrita no modo feita pela própria callback do timer. */
+unsigned g_ps2_tmr_servindo;
+
 static void return_from_exception(CPUState *cpu)
 {
+    ps2_diag(6u, salvo_epc);
+    g_ps2_tmr_servindo = 0;
     memcpy(cpu->gpr, salvo_gpr, sizeof(salvo_gpr));
     cpu->hi = salvo_hi; cpu->lo = salvo_lo;
     cpu->cop0[12] = salvo_sr;
@@ -253,6 +261,7 @@ static void sair_da_excecao(CPUState *cpu)
         return_from_exception(cpu);
         return;
     }
+    ps2_diag(16u, ps2_ram_get32(b + 0));
     /* longjmp da BIOS do PS1: ra, sp, fp, s0-s7, gp; devolve 1 em v0. */
     cpu->pc       = ps2_ram_get32(b + 0);
     cpu->gpr[29]  = ps2_ram_get32(b + 4);
@@ -265,6 +274,7 @@ static void sair_da_excecao(CPUState *cpu)
 
 static void entrar_na_excecao(CPUState *cpu, uint32_t pc)
 {
+    ps2_diag(5u, ps2_irq_pending());
     memcpy(salvo_gpr, cpu->gpr, sizeof(salvo_gpr));
     salvo_hi = cpu->hi; salvo_lo = cpu->lo;
     salvo_epc = pc;
@@ -294,6 +304,7 @@ static void entrar_na_excecao(CPUState *cpu, uint32_t pc)
         /* cb_fila NÃO é zerada: entregas pendentes são processadas aqui (F3) */
         for (t = 0; t < 4; t++)
             if (ps2_irq_pending() & (1u << bit_rcnt[t])) {
+                if (t < 3) g_ps2_tmr_servindo |= 1u << t;     /* V43 */
                 if (rcnt_clear[t])
                     ps2_irq_ack(bit_rcnt[t]);
                 ev_entregar(0xF2000000u | t, 0x0002u);   /* RCntCNTn, EvSpINT */
@@ -345,6 +356,7 @@ static void irq_poll_corpo(CPUState *cpu, uint32_t pc, int *entrar)
         ps2_video_vblank();
         g_prof_vblank += (uint32_t)(prof_agora() - tv);
         ps2_irq_raise(IRQ_VBLANK);
+        ps2_diag(1u, (uint32_t)g_vblanks);
         proximo_vblank += CICLOS_VBLANK;
         /* atrasou mais de um período (ex.: gravação do log): pula os VBlanks
          * perdidos SEM perder a fase (antes somava o atraso todo e o PS1
@@ -377,6 +389,7 @@ int ps2_bios_call(CPUState *cpu, uint32_t endereco)
     uint32_t v0 = 0;
 
     if (endereco == RET_MAGICO && em_excecao) {     /* voltou de um handler */
+        ps2_diag(8u, 0);
         continuar_excecao(cpu);
         return 1;
     }

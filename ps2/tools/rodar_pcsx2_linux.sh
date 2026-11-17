@@ -12,9 +12,13 @@ LIBS_DIR="${LIBS_DIR:-$HOME/work/debs/root/usr/lib/x86_64-linux-gnu}"
 LOG="$AQUI/docs/ultimo_log_pcsx2.txt"
 TELA="$AQUI/build/tela_pcsx2.png"
 
-export LD_LIBRARY_PATH="$LIBS_DIR"
-export LIBGL_DRIVERS_PATH="$LIBS_DIR/dri"
-export __EGL_VENDOR_LIBRARY_DIRS="$LIBS_DIR/../../share/glvnd/egl_vendor.d"
+# Libs extraídas à parte (máquinas sem OpenGL instalado). No Ubuntu com as libs
+# do sistema, NÃO usar LD_LIBRARY_PATH: troca o Qt do AppImage pelo do sistema.
+if [ -d "$LIBS_DIR/dri" ] && [ "$LIBS_DIR" != /usr/lib/x86_64-linux-gnu ]; then
+  export LD_LIBRARY_PATH="$LIBS_DIR"
+  export LIBGL_DRIVERS_PATH="$LIBS_DIR/dri"
+  export __EGL_VENDOR_LIBRARY_DIRS="$LIBS_DIR/../../share/glvnd/egl_vendor.d"
+fi
 export QT_QPA_PLATFORM=xcb
 # Esconde o Vulkan: na tela virtual (Xvfb) ele falha ("no present queue").
 # Sem ele o PCSX2 apresenta a imagem do renderizador por software via OpenGL.

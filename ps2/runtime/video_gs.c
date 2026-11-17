@@ -225,10 +225,12 @@ static void diagnostico(const Ps2GpuDisplay *d, const uint16_t *vram)
                 extern unsigned long g_ps2_listas_puladas, g_ps2_listas_total, g_gsr_prims, g_ps2_listas_ciclicas;
                 extern int dedup_ligado;
                 static unsigned long long exc_ant2;
-                char txt[180];
+                char txt[240];
+                extern const char *ps2_relogio_relatorio(void);
+                const char *rl = ps2_relogio_relatorio();   /* V43 */
                 snprintf(txt, sizeof(txt),
-                         "%s%s\nGPU %llu%% INT %llu%%\nLISTAS %lu PUL %lu CIC %lu\nPOLI/VB %lu\n%s",
-                         JOGO_VERSAO, dedup_ligado ? "" : " SEM DEDUP",
+                         "%s%s\n%s\nGPU %llu%% INT %llu%%\nLISTAS %lu PUL %lu CIC %lu\nPOLI/VB %lu\n%s",
+                         JOGO_VERSAO, dedup_ligado ? "" : " SEM DEDUP", rl,
                          (unsigned long long)(g_ps2_gpu_ciclos - gpu_ant) * 100ull / t,
                          (g_ps2_exc_ciclos - exc_ant2) * 100ull / t,
                          g_ps2_listas_total, g_ps2_listas_puladas, g_ps2_listas_ciclicas, g_gsr_prims / 120ul,
@@ -353,6 +355,23 @@ static void diagnostico(const Ps2GpuDisplay *d, const uint16_t *vram)
                         ps2_nat_relatorio((unsigned long long)t);
                         printf("logica: atualizacoes da luta (8002ae58) %lu | maior intervalo sem verificar interrupcao %lu us\n",
                                g_ps2_luta_atualiz, (unsigned long)(g_ps2_maior_sem_poll / 294u));
+                        {   /* V41d: despeja a linha do tempo de alguns quadros da luta */
+                            static unsigned rel_luta;
+                            extern void ps2_diag_despejar(unsigned);
+                            /* V42: só nas versões com log (na "jogo" o stdout
+                             * não vai para o pendrive e o despejo só gastaria tempo) */
+                            if (PS2_LOG_BLOCOS > 0 && g_ps2_luta_atualiz >= 80u) {
+                                rel_luta++;
+                                if (rel_luta == 8u || rel_luta == 20u) ps2_diag_despejar(1200u);
+                            }
+                            /* V43: trecho com 1 passo por quadro (abertura do round,
+                             * KO, pose de vitória): 1 despejo para ver se o quadro
+                             * espera (o jogo quer 30/s) ou não cabe em 1 VBlank */
+                            {   static unsigned rel_meio;
+                                if (PS2_LOG_BLOCOS > 0 && g_ps2_luta_atualiz >= 40u && g_ps2_luta_atualiz <= 70u &&
+                                    ++rel_meio == 3u) ps2_diag_despejar(900u); }
+                            if (PS2_LOG_BLOCOS > 0) { extern void ps2_diag_despejar_lento(void); ps2_diag_despejar_lento(); }
+                        }
                         g_ps2_luta_atualiz = 0; g_ps2_maior_sem_poll = 0;
                     }
                 }
@@ -477,8 +496,16 @@ void ps2_video_vblank(void)
 #ifdef PS2_DEBUG_VRAM
     salvar_vram(vram);
 #endif
+    { extern void ps2_relogio_vblank(void); ps2_relogio_vblank(); }   /* V43 */
     tp0 = agora_ee();
-    diagnostico(&d, vram);
+    {   /* V43: marca na linha do tempo o VBlank do relatório (~2 s) */
+        static unsigned nrel;
+        int rel = (++nrel % 120u) == 0u;
+        extern void ps2_diag(unsigned, uint32_t);
+        if (rel) ps2_diag(21u, 0);
+        diagnostico(&d, vram);
+        if (rel) ps2_diag(22u, (uint32_t)(agora_ee() - tp0) / 295u);
+    }
     g_prof_diag += (uint32_t)(agora_ee() - tp0);
     talvez_gravar_log();
     /* Com o GS desenhando, exibir é só um sprite da VRAM no GS para a tela
@@ -488,10 +515,12 @@ void ps2_video_vblank(void)
         gsr_exibir(gs->ScreenBuffer[0], TELA_LARGURA / 64u, gs->PSM, TELA_LARGURA, (unsigned)gs->Height, 0, 0, 1020, 512);
 #else
         tp0 = agora_ee();
+        { extern void ps2_diag(unsigned, uint32_t); ps2_diag(14u, 0); }
         if (d.ativo)
             gsr_exibir(gs->ScreenBuffer[0], TELA_LARGURA / 64u, gs->PSM, TELA_LARGURA, (unsigned)gs->Height,
                        d.x, d.y, d.largura, d.altura);
         g_prof_exibir += (uint32_t)(agora_ee() - tp0);
+        { extern void ps2_diag(unsigned, uint32_t); ps2_diag(15u, 0); }
 #endif
         (void)x; (void)y;
         return;

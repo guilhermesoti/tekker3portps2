@@ -9,7 +9,7 @@
 #ifndef JOGO_SUFIXO
 #define JOGO_SUFIXO ""
 #endif
-#define JOGO_VERSAO      "T3 PS2 V39" JOGO_SUFIXO
+#define JOGO_VERSAO      "T3 PS2 V43" JOGO_SUFIXO
 #define JOGO_PASTA_USB   "mass:/TEKKEN3/"         /* reserva se o argv0 falhar */
 #define JOGO_LOG         "tekken3_log.txt"
 /* Log: grava no pendrive a cada N relatórios de ~2 s (cada gravação trava

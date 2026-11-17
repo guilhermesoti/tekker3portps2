@@ -56,6 +56,16 @@ cab = 'void func_800296C4(CPUState* restrict cpu)\n{\n'
 if cab in s:
     s = s.replace(cab, cab + '    { extern void ps2_quadro_espera(void); if (cpu->pc == 0u) ps2_quadro_espera(); }\n', 1)
 
+# V41: diagnóstico — entrada da lógica da luta (8002AE58) e fim da espera do
+# quadro (8006B6FC é a 1ª chamada depois de 800296C4 no laço principal 80028BA0)
+# V42: + 800295F4 (teste "contador do timer 2 >= 2" que libera o passo de
+# recuperação da lógica)
+for _f, _g in (('8002AE58', 'ps2_diag_luta'), ('8006B6FC', 'ps2_diag_espera_fim'),
+               ('800295F4', 'ps2_diag_recupera')):
+    cab = 'void func_%s(CPUState* restrict cpu)\n{\n' % _f
+    if cab in s:
+        s = s.replace(cab, cab + '    { extern void %s(void); if (cpu->pc == 0u) %s(); }\n' % (_g, _g), 1)
+
 # V36: o port ainda não tem som. O tick do sequenciador de som do jogo
 # (80088BA8, chamado na IRQ do timer 2) era ~18% do EE ("quente 80088c00")
 # calculando notas/volumes para nada. Com PS2_SOM_PULAR=1 (padrão,
