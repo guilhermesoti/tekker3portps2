@@ -38,6 +38,9 @@ void     ps2_irq_ack(unsigned bit);
 uint32_t ps2_irq_pending(void);                /* I_STAT & I_MASK */
 
 void     ps2_timers_poll(void);                /* IRQs dos timers */
+/* V35: eventos gerados / IRQs entregues / descartadas desde a última chamada (zera) */
+void     ps2_timers_estat(int t, unsigned long *eventos, unsigned long *entregues,
+                          unsigned long *descartadas, unsigned *modo, unsigned *alvo);
 
 /* Relógio do PS1 (33,8688 MHz) derivado do contador do EE. */
 uint32_t ps2_ps1_cycles(void);

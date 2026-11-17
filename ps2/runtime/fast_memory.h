@@ -27,6 +27,7 @@ struct CPUState;
  * vem depois (sem "static") herda a ligação interna desta, o que o C permite.
  */
 extern int g_ps2_contagem_irq;
+extern uint32_t g_ps2_ver_ok[];     /* V33: entrada do despacho validada nesta versão */
 void ps2_irq_poll_lento(struct CPUState *cpu, uint32_t pc);
 static inline __attribute__((always_inline)) void psx_check_interrupts_at(struct CPUState *cpu, uint32_t pc)
 {

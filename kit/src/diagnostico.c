@@ -7,7 +7,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#define BUF_TAM (64u * 1024u)
+#ifndef KIT_LOG_BUF
+#define KIT_LOG_BUF (256u * 1024u)    /* gravando a cada ~30 s cabe com folga */
+#endif
+#define BUF_TAM KIT_LOG_BUF
 
 static char     buf[BUF_TAM];
 static size_t   buf_n;
@@ -98,3 +101,12 @@ int kit_log_gravar(void)
 }
 
 const char *kit_log_estado(void) { return estado; }
+
+size_t kit_log_pendente(void)
+{
+    if (!ativo) return 0;
+    fflush(stdout);
+    return buf_n;
+}
+
+size_t kit_log_capacidade(void) { return BUF_TAM; }

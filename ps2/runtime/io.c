@@ -114,8 +114,30 @@ typedef struct {
     uint32_t marcas;    /* alvo (16 bits baixos) e overflow (altos) já vistos */
     uint32_t irq_marcas;/* idem, só dos eventos que geram IRQ */
     uint8_t  irq_feita; /* modo "one-shot": já gerou a IRQ */
+    uint32_t atrasadas; /* V35: IRQs que o timer gerou e ainda não foram entregues */
 } Timer;
 static Timer tmr[3];
+
+/* V35: o Tekken marca o ritmo do jogo pela IRQ do timer 2 (handler 80029784,
+ * que libera o próximo passo em 8009bc5c), não pelo VBlank. Antes, se o alvo
+ * fosse cruzado várias vezes entre duas conferências, só UMA IRQ era gerada e
+ * as outras se perdiam -> o jogo andava a ~70% (cronômetro do round 40 s em
+ * 56 s no console). Agora as que sobram ficam na fila e são entregues assim
+ * que o jogo reconhece a anterior (I_STAT limpo). Teto para não virar
+ * avalanche depois de uma parada longa (gravação, carregamento). */
+#ifndef PS2_TMR_RECUPERAR
+#define PS2_TMR_RECUPERAR 1
+#endif
+#define TMR_MAX_ATRASO 64u
+static unsigned long t_eventos[3], t_entregues[3], t_descartadas[3];
+
+void ps2_timers_estat(int t, unsigned long *eventos, unsigned long *entregues,
+                      unsigned long *descartadas, unsigned *modo, unsigned *alvo)
+{
+    *eventos = t_eventos[t]; *entregues = t_entregues[t]; *descartadas = t_descartadas[t];
+    *modo = tmr[t].modo; *alvo = tmr[t].alvo;
+    t_eventos[t] = t_entregues[t] = t_descartadas[t] = 0;
+}
 
 static uint32_t timer_divisor(int t)
 {
@@ -215,12 +237,33 @@ void ps2_timers_poll(void)
         marcas = (((modo & (1u << 4)) ? m_alvo : 0u) & 0xFFFFu) |
                  ((((modo & (1u << 5)) ? m_ovf : 0u) & 0xFFFFu) << 16);
         if (marcas != (tmr[t].irq_marcas)) {
+            /* quantos eventos novos (alvo + overflow) desde a última vez */
+            uint32_t novos = ((marcas - tmr[t].irq_marcas) & 0xFFFFu) +
+                             (((marcas >> 16) - (tmr[t].irq_marcas >> 16)) & 0xFFFFu);
             tmr[t].irq_marcas = marcas;
             if ((modo & (1u << 6)) || !tmr[t].irq_feita) {   /* repetir ou 1ª vez */
+                if (!(modo & (1u << 6))) novos = 1u;
                 tmr[t].irq_feita = 1;
-                ps2_irq_raise(irq[t]);
+                t_eventos[t] += novos;
+#if PS2_TMR_RECUPERAR
+                tmr[t].atrasadas += novos;
+#else
+                ps2_irq_raise(irq[t]); t_entregues[t]++;
+                t_descartadas[t] += novos - 1u;
+#endif
             }
         }
+#if PS2_TMR_RECUPERAR
+        if (tmr[t].atrasadas > TMR_MAX_ATRASO) {
+            t_descartadas[t] += tmr[t].atrasadas - TMR_MAX_ATRASO;
+            tmr[t].atrasadas = TMR_MAX_ATRASO;
+        }
+        if (tmr[t].atrasadas && !(i_stat & (1u << irq[t]))) {
+            ps2_irq_raise(irq[t]);
+            tmr[t].atrasadas--;
+            t_entregues[t]++;
+        }
+#endif
         tmr[t].marcas = (m_alvo & 0xFFFFu) | ((m_ovf & 0xFFFFu) << 16);
     }
 }

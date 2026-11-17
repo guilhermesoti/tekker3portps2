@@ -50,6 +50,56 @@ for a in NATIVAS:
         s = s.replace(cab, cab + '''    { extern int ps2_nat_%s_gancho(CPUState *cpu);
       if (cpu->pc == 0u && ps2_nat_%s_gancho(cpu)) return; }
 ''' % (a, a), 1)
+# V36: o port ainda não tem som. O tick do sequenciador de som do jogo
+# (80088BA8, chamado na IRQ do timer 2) era ~18% do EE ("quente 80088c00")
+# calculando notas/volumes para nada. Com PS2_SOM_PULAR=1 (padrão,
+# runtime/nativo_ganchos.c) a função volta na hora.
+cab = 'void func_80088BA8(CPUState* restrict cpu)\n{\n'
+if cab in s:
+    s = s.replace(cab, cab + '    { extern int ps2_som_pular(CPUState *cpu); if (cpu->pc == 0u && ps2_som_pular(cpu)) return; }\n', 1)
+
+# 9. V33: "jal" com alvo constante vira chamada C direta. Se a função chamada
+# voltar normalmente (cpu->pc == endereço de retorno) e nenhum código foi
+# sobrescrito no meio (g_cod_ver igual), continua no bloco seguinte da própria
+# função, sem passar pelo laço de despacho (2 despachos a menos por chamada).
+# Só quando o alvo já foi validado (g_ps2_ver_ok); senão, caminho antigo.
+def _tabela_despacho():
+    d = os.path.join(os.path.dirname(os.path.abspath(ent)), 'SLUS_004.02_dispatch.c')
+    t = open(d, encoding='utf-8', errors='replace').read()
+    i = t.index('k_psx_game_dispatch[] = {')
+    idx = {}
+    for k, m in enumerate(re.finditer(r'\{0x([0-9A-F]+)u, 0x([0-9A-F]+)u, \d+u, \d+u, (func_[0-9A-F_]+)\}', t[i:])):
+        ad, res, fn = m.group(1), m.group(2), m.group(3)
+        if res == '00000000' and fn == 'func_' + ad:
+            idx[ad] = k
+    return idx
+if not ent.endswith('_dispatch.c') and 'CPS jal ->' in s:
+    _IDX = _tabela_despacho()
+    partes = re.split(r'(?=\n(?:static )?void \w+\(CPUState\*)', s)
+    n_jal = 0
+    for pi, corpo in enumerate(partes):
+        def _troca(m):
+            global n_jal
+            ini = m.start()
+            alvo = m.group(1)
+            lk = corpo.rfind('cpu->gpr[31] = 0x', max(0, ini - 4000), ini)
+            if lk < 0 or alvo not in _IDX:
+                return m.group(0)
+            ret = re.match(r'cpu->gpr\[31\] = 0x([0-9A-F]{8})u;', corpo[lk:])
+            if not ret:
+                return m.group(0)
+            r = ret.group(1)
+            if ('block_%s:' % r) not in corpo:
+                return m.group(0)
+            n_jal += 1
+            return ('{ if (__builtin_expect(g_ps2_ver_ok[%du] == g_cod_ver, 1)) { uint32_t _v = g_cod_ver; '
+                    'cpu->pc = 0; func_%s(cpu); '
+                    'if (cpu->pc == 0x%su && g_cod_ver == _v) { cpu->pc = 0; psx_check_interrupts_at(cpu, 0x%su); goto block_%s; } '
+                    'return; } cpu->pc = 0x%su; return; }  /* V33 jal direto -> 0x%s */'
+                    % (_IDX[alvo], alvo, r, r, r, alvo, alvo))
+        partes[pi] = re.sub(r'cpu->pc = 0x([0-9A-F]{8})u; return;  /\* CPS jal -> 0x[0-9A-F]{8} \*/', _troca, corpo)
+    s = ''.join(partes)
+    sys.stderr.write('transformar_gerado: %d jal diretos\n' % n_jal)
 
 if ent.endswith('_dispatch.c'):
     velho = 'static const PsxGameDispatchEntry* psx_game_find_entry(uint32_t addr) {'
@@ -144,13 +194,12 @@ static uint32_t g_ps2_prof_t, g_ps2_prof_ult;
     if velho not in s:
         sys.exit('transformar_gerado: validacao do despacho nao encontrada')
     s = s.replace(velho, """    {
-        static uint32_t ver_ok[PSX_GAME_DISPATCH_COUNT];
         uint32_t idx = (uint32_t)(entry - k_psx_game_dispatch);
-        if (__builtin_expect(ver_ok[idx] != g_cod_ver, 0)) {
+        if (__builtin_expect(g_ps2_ver_ok[idx] != g_cod_ver, 0)) {
             uint32_t v = g_cod_ver;
             if (entry->range_count == 0 || !dirty_ram_text_native_ok_ranges_from(
                     &k_psx_game_code_ranges[entry->range_index].lo, entry->range_count, addr)) return 0;
-            ver_ok[idx] = v;
+            g_ps2_ver_ok[idx] = v;
         }
     }
     psx_check_interrupts_at(cpu, addr);""", 1)
@@ -161,6 +210,7 @@ static uint32_t g_ps2_prof_t, g_ps2_prof_ult;
     if velho not in s:
         sys.exit('transformar_gerado: vsync_query do despacho nao encontrado')
     s = s.replace(velho, "    /* (V31: psx_vsync_query_hle_try removido: no PS2 sempre 0) */", 1)
+    s = s.replace('/* ps2: perfil por função (V22) */', 'uint32_t g_ps2_ver_ok[PSX_GAME_DISPATCH_COUNT];   /* V31/V33 */\n/* ps2: perfil por função (V22) */', 1)
     if '#include "fast_memory.h"' not in s:
         s = s.replace('/* ps2: perfil por função (V22) */', '#include "fast_memory.h"\n/* ps2: perfil por função (V22) */', 1)
 

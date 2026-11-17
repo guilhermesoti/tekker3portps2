@@ -16,6 +16,9 @@ export LD_LIBRARY_PATH="$LIBS_DIR"
 export LIBGL_DRIVERS_PATH="$LIBS_DIR/dri"
 export __EGL_VENDOR_LIBRARY_DIRS="$LIBS_DIR/../../share/glvnd/egl_vendor.d"
 export QT_QPA_PLATFORM=xcb
+# Esconde o Vulkan: na tela virtual (Xvfb) ele falha ("no present queue").
+# Sem ele o PCSX2 apresenta a imagem do renderizador por software via OpenGL.
+export VK_DRIVER_FILES=/nonexistent VK_ICD_FILENAMES=/nonexistent
 DISP=":$((90 + RANDOM % 100))"
 Xvfb "$DISP" -screen 0 1280x720x24 >/dev/null 2>&1 & XP=$!
 sleep 2

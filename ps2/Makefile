@@ -59,15 +59,18 @@ VRAM_FLAGS += $(if $(filter 1,$(AUTO_START)),-DPS2_AUTO_START,)
 # VER_VRAM=1: mostra a VRAM inteira do PS1 (1024x512) na tela (diagnóstico)
 VER_VRAM ?= 0
 VRAM_FLAGS += $(if $(filter 1,$(VER_VRAM)),-DPS2_VER_VRAM,)
+# LOG_BLOCOS: grava o log a cada N relatórios de ~2 s (15 = ~30 s); 0 = sem log
+LOG_BLOCOS ?= 15
+LOG_FLAGS := -DPS2_LOG_BLOCOS=$(LOG_BLOCOS)
 build/gpu.o: EE_CFLAGS += $(GPU_FLAGS)
 # FORCAR_IOP=1: testa no PCSX2 o caminho do PS2 real (reinicia o IOP, módulos USB)
-build/main.o: EE_CFLAGS += $(if $(filter 1,$(FORCAR_IOP)),-DPS2_FORCAR_IOP,) $(JOGO_SUFIXO_FLAG)
-build/video_gs.o: EE_CFLAGS += $(VRAM_FLAGS) $(JOGO_SUFIXO_FLAG)
+build/main.o: EE_CFLAGS += $(if $(filter 1,$(FORCAR_IOP)),-DPS2_FORCAR_IOP,) $(JOGO_SUFIXO_FLAG) $(LOG_FLAGS)
+build/video_gs.o: EE_CFLAGS += $(VRAM_FLAGS) $(JOGO_SUFIXO_FLAG) $(LOG_FLAGS)
 build/gpu.o build/gs_render.o build/video_gs.o build/main.o: build/debug_flags
 
 build/debug_flags: FORCE
 	@mkdir -p $(@D)
-	@printf '%s\n' 'DEBUG_GPU=$(DEBUG_GPU) DEBUG_VRAM=$(DEBUG_VRAM) AUTO_START=$(AUTO_START) VER_VRAM=$(VER_VRAM) FORCAR_IOP=$(FORCAR_IOP)' > $@.tmp
+	@printf '%s\n' 'DEBUG_GPU=$(DEBUG_GPU) DEBUG_VRAM=$(DEBUG_VRAM) AUTO_START=$(AUTO_START) VER_VRAM=$(VER_VRAM) FORCAR_IOP=$(FORCAR_IOP) LOG_BLOCOS=$(LOG_BLOCOS)' > $@.tmp
 	@if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi
 
 all: $(EE_BIN)

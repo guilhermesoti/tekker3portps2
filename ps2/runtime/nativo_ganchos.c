@@ -109,6 +109,26 @@ int ps2_nat_executar(CPUState *cpu, uint32_t ini, void (*nat)(CPUState *))
     return 1;
 }
 
+/* V36: sem som no port -> pula o tick do sequenciador de som (80088BA8).
+ * Se algum ponto do jogo travar esperando música/voz terminar, compile com
+ * -DPS2_SOM_PULAR=0 (ou troque o padrão abaixo) para voltar ao original. */
+#ifndef PS2_SOM_PULAR
+#define PS2_SOM_PULAR 1
+#endif
+unsigned long g_ps2_som_pulados;
+int ps2_som_pular(CPUState *cpu)
+{
+#if PS2_SOM_PULAR
+    g_ps2_som_pulados++;
+    cpu->gpr[2] = 0;
+    cpu->pc = cpu->gpr[31];         /* volta para quem chamou (jr $ra) */
+    return 1;
+#else
+    (void)cpu;
+    return 0;
+#endif
+}
+
 /* V32: uma linha por período no log (video_gs.c) */
 void ps2_nat_relatorio(unsigned long long total)
 {

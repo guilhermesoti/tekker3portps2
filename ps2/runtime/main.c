@@ -278,8 +278,8 @@ int main(int argc, char **argv)
             kit_arm_esperar(caminhos, 10000u, NULL, 0);
         }
         /* PS2 real: o log vai para tekken3_log.txt ao lado do ELF; video_gs.c
-         * grava a cada ~2 s (só quando o CD não está lendo). */
-        if (r == KIT_ARM_OK) {
+         * grava a cada PS2_LOG_BLOCOS relatórios (só quando o CD não está lendo). */
+        if (r == KIT_ARM_OK && PS2_LOG_BLOCOS > 0) {
             snprintf(log, sizeof(log), "%s%s", pasta_elf, JOGO_LOG);
             if (kit_log_iniciar(log)) {
                 extern void ps2_cdrom_io_barreira(void);

@@ -34,7 +34,8 @@ Detalhes de compilação e teste: [`ps2/README.md`](ps2/README.md).
 
 - Boot pelo pendrive (OPL) no PS2 real, menus, controle, vídeos (MDEC) e lutas
   completas com renderização no GS.
-- **As lutas ainda rodam abaixo de 60 fps no console** (cerca de 40 fps na
-  V32). As otimizações estão em andamento: GTE especializado, desenho direto
-  para o GS, despacho mais barato e rotinas do jogo traduzidas para C nativo.
+- **As lutas rodam a ~83% da velocidade no console (V36)**, medido pelo
+  relógio do round (40 s do jogo em 48 s; no PS1 real, 39 s). A V35 corrigiu
+  a perda de IRQs do timer 2, que marca o ritmo do jogo (era ~71%). Detalhes
+  e próximos passos em [`ps2/docs/STATUS_V36.md`](ps2/docs/STATUS_V36.md).
 - Ainda sem som e sem memory card. A abertura (FMV) é pulada.

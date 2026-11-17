@@ -1,6 +1,7 @@
 #include "video_gs.h"
 #include "gpu.h"
 #include "jogo.h"
+#include "io.h"
 #include "kit/controle.h"
 #include "gs_render.h"
 #include "kit/diagnostico.h"
@@ -276,6 +277,22 @@ static void diagnostico(const Ps2GpuDisplay *d, const uint16_t *vram)
                     printf("\n");
                     for (q = 0; q < 11u; q++) { ant[q] = g_prof_irq_ciclos[q]; g_prof_irq_n[q] = 0; }
                 }
+                {   /* V35: ritmo do jogo. O Tekken avança pelo timer 2 (handler
+                     * 80029784): 80095434 conta as IRQs que o jogo recebeu e
+                     * 80097f00 os passos liberados (8009bc5c). */
+                    extern uint8_t g_ps1_ram[];
+                    static uint32_t tick_a, passo_a;
+                    uint32_t tick, passo;
+                    unsigned long ev, en, de; unsigned md, al;
+                    memcpy(&tick, g_ps1_ram + 0x95434u, 4);
+                    memcpy(&passo, g_ps1_ram + 0x97f00u, 4);
+                    ps2_timers_estat(2, &ev, &en, &de, &md, &al);
+                    extern unsigned long g_ps2_som_pulados;
+                    printf("ritmo: timer2 eventos %lu entregues %lu descartados %lu (modo %04x alvo %04x) | jogo: irqs vistas %lu, passos liberados %lu | som pulado %lu\n",
+                           ev, en, de, md, al, (unsigned long)(tick - tick_a), (unsigned long)(passo - passo_a), g_ps2_som_pulados);
+                    g_ps2_som_pulados = 0;
+                    tick_a = tick; passo_a = passo;
+                }
                 {
                     extern unsigned long long g_prof_espera_gs, g_prof_log, g_prof_cd, g_prof_tmr, g_prof_vblank;
                     extern unsigned long g_gsr_texflush;
@@ -392,7 +409,16 @@ static void diagnostico(const Ps2GpuDisplay *d, const uint16_t *vram)
         g_ps2_px_tri = g_ps2_px_tri_tex = g_ps2_px_ret = g_ps2_px_semi = 0;
         total_ant = total; gpu_ant = g_ps2_gpu_ciclos; vid_ant = g_ps2_video_ciclos;
     }
-    log_pendente = 1;                   /* gravado em ps2_video_vblank (ver lá) */
+    {   /* V32b: gravar no pendrive trava ~50 ms (log V33 do console: maior
+         * intervalo sem interrupção 50-60 ms em todo relatório). Grava só a
+         * cada PS2_LOG_BLOCOS relatórios ou com o buffer pela metade. */
+        static unsigned blocos;
+        if (++blocos >= (unsigned)PS2_LOG_BLOCOS ||
+            kit_log_pendente() > kit_log_capacidade() / 2u) {
+            log_pendente = 1;           /* gravado em ps2_video_vblank (ver lá) */
+            blocos = 0;
+        }
+    }
     printf("video: exib=%d x=%u y=%u %ux%u 24b=%d | VRAM com cor: %u/%u amostras | GP0: %lu palavras\n",
            d->ativo, d->x, d->y, d->largura, d->altura, d->cor24, acesos, total,
            g_ps2_gpu_palavras);
