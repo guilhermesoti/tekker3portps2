@@ -129,6 +129,33 @@ int ps2_som_pular(CPUState *cpu)
 #endif
 }
 
+/* V37: período entre entradas na espera do quadro (800296C4), em ciclos do
+ * EE (294,912 MHz; 1 VBlank NTSC = 4,92 M). Separa os quadros que couberam em
+ * 1 VBlank dos que perderam o VBlank, e guarda o pior. */
+static uint32_t q_ant, q_max, q_n, q_1vb, q_2vb, q_3vb;
+void ps2_quadro_espera(void)
+{
+#ifdef _EE
+    uint32_t t, d;
+    __asm__ volatile("mfc0 %0, $9" : "=r"(t));
+    d = t - q_ant;
+    q_ant = t;
+    if (q_n++ == 0u && q_1vb + q_2vb + q_3vb == 0u) return;   /* 1º do período */
+    if (d < 6000000u) q_1vb++;          /* < ~20 ms   */
+    else if (d < 11000000u) q_2vb++;    /* < ~37 ms   */
+    else q_3vb++;
+    if (d > q_max) q_max = d;
+#endif
+}
+void ps2_quadro_relatorio(void)
+{
+    printf("quadros: %lu (1 VBlank %lu, 2 VBlanks %lu, 3+ %lu), pior %lu.%lu ms\n",
+           (unsigned long)q_n, (unsigned long)q_1vb, (unsigned long)q_2vb,
+           (unsigned long)q_3vb, (unsigned long)(q_max / 294912u),
+           (unsigned long)((q_max % 294912u) * 10u / 294912u));
+    q_n = q_1vb = q_2vb = q_3vb = q_max = 0;
+}
+
 /* V32: uma linha por período no log (video_gs.c) */
 void ps2_nat_relatorio(unsigned long long total)
 {

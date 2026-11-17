@@ -39,6 +39,7 @@ uint32_t ps2_irq_pending(void);                /* I_STAT & I_MASK */
 
 void     ps2_timers_poll(void);                /* IRQs dos timers */
 /* V35: eventos gerados / IRQs entregues / descartadas desde a última chamada (zera) */
+unsigned long ps2_timers_escritas(int t);      /* V37: escritas desde a última chamada */
 void     ps2_timers_estat(int t, unsigned long *eventos, unsigned long *entregues,
                           unsigned long *descartadas, unsigned *modo, unsigned *alvo);
 

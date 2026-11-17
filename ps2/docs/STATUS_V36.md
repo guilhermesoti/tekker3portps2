@@ -51,3 +51,24 @@ real (a V33 marcava 118/120 e rodava a ~71%). A medida confiável é o
   `bash ps2/tools/rodar_ps2_rede.sh IP_DO_PS2`. Rodando de `host:` o
   port não reinicia o IOP, mas **lê o CD pela rede de forma síncrona** (~13% do
   EE): serve para testar se funciona, **não para medir velocidade**.
+
+## V37–V39 (17/11, tarde)
+
+| Versão | Mudança | Cronômetro (40 s) |
+|---|---|---|
+| V37 | mede quadros (período entre esperas em `800296c4`) e escritas no timer 2 | 50 s (-O2) / 52 s (-Os) — **-Os não ajuda** |
+| V38 | escrever o modo do timer entrega antes os alvos já cruzados | **47 s** (~85%), sem log |
+| V39 | perfil também nas chamadas C diretas (`make GEN_OPT="-O2 -DPS2_PROF_DIRETO=1"`) | só medida |
+
+- O Tekken desenha **a 30 quadros/s** (2 passos de lógica por quadro). Meta:
+  todo quadro em **2 VBlanks (< 33,3 ms)**. Hoje a maioria leva 3 (~45–53 ms).
+- **Congelamentos de 0,3–0,9 s = gravação do log a cada 30 s** (V34). Para
+  jogar/cronometrar: `make LOG_BLOCOS=0`. Log só em build de diagnóstico.
+- Timer 2: o jogo o reprograma ~590×/s; as ~140 IRQs/s são do próprio jogo.
+- **Perfil corrigido (V39, luta):** `8007e0b8` 16,5% (é o DrawOTag da libgpu:
+  o custo é o processamento da lista no port — hash + conversão para o GS),
+  nativa `80036cac` 13,5%, espera do quadro (`800296c4`+`8004ce54`) ~15%,
+  depois uma cauda longa (`8003b71c` 3,9%, `80037a9c` 2,5%, `8003b1c4` 2,1%...).
+  `8003a87c` e `80028bcc` (~20% e ~8% antes) eram erro de atribuição.
+- Próximo: tirar o hash das listas (grânulos sujos), build sem instrumentação
+  (PROF=0), acelerar a nativa `80036cac` e o caminho de desenho.

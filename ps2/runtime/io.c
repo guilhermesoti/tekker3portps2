@@ -130,6 +130,8 @@ static Timer tmr[3];
 #endif
 #define TMR_MAX_ATRASO 64u
 static unsigned long t_eventos[3], t_entregues[3], t_descartadas[3];
+static unsigned long t_escritas[3];   /* V37: escritas em modo/alvo/contador */
+unsigned long ps2_timers_escritas(int t) { unsigned long n = t_escritas[t]; t_escritas[t] = 0; return n; }
 
 void ps2_timers_estat(int t, unsigned long *eventos, unsigned long *entregues,
                       unsigned long *descartadas, unsigned *modo, unsigned *alvo)
@@ -199,6 +201,7 @@ static void timer_write(uint32_t off, uint32_t v)
     int t = (int)((off - 0x100u) >> 4);
     uint32_t agora = ps2_ps1_cycles();
     static unsigned n_dbg;
+    if (t >= 0 && t < 3) t_escritas[t]++;
     if (n_dbg < 20u && (off & 0xFu) != 0u) {
         n_dbg++;
         printf("timer%d: %s = %04lx\n", t, (off & 0xFu) == 4u ? "modo" : "alvo",
@@ -207,7 +210,12 @@ static void timer_write(uint32_t off, uint32_t v)
     switch (off & 0xFu) {
     case 0x0: tmr[t].base = agora - (v & 0xFFFFu) * timer_divisor(t);
               timer_sincronizar(t, agora); break;
-    case 0x4: tmr[t].modo = (uint16_t)(v & 0x3FFu); tmr[t].base = agora;
+    case 0x4: /* V38: antes de reiniciar, gera as IRQs dos alvos já cruzados.
+               * No PS1 elas já teriam acontecido antes desta escrita; aqui,
+               * se a última conferência foi antes do cruzamento, se perdiam
+               * (o Tekken rearma o timer 2 ~600x/s). */
+              ps2_timers_poll();
+              tmr[t].modo = (uint16_t)(v & 0x3FFu); tmr[t].base = agora;
               tmr[t].marcas = 0; tmr[t].irq_marcas = 0; tmr[t].irq_feita = 0; break;
     case 0x8: tmr[t].alvo = (uint16_t)v; timer_sincronizar(t, agora); break;
     }

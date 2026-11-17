@@ -291,6 +291,9 @@ static void diagnostico(const Ps2GpuDisplay *d, const uint16_t *vram)
                     printf("ritmo: timer2 eventos %lu entregues %lu descartados %lu (modo %04x alvo %04x) | jogo: irqs vistas %lu, passos liberados %lu | som pulado %lu\n",
                            ev, en, de, md, al, (unsigned long)(tick - tick_a), (unsigned long)(passo - passo_a), g_ps2_som_pulados);
                     g_ps2_som_pulados = 0;
+                    {   extern void ps2_quadro_relatorio(void);
+                        printf("timer2: escritas %lu | ", ps2_timers_escritas(2));
+                        ps2_quadro_relatorio(); }
                     tick_a = tick; passo_a = passo;
                 }
                 {

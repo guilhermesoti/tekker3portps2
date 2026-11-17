@@ -27,7 +27,31 @@ struct CPUState;
  * vem depois (sem "static") herda a ligação interna desta, o que o C permite.
  */
 extern int g_ps2_contagem_irq;
-extern uint32_t g_ps2_ver_ok[];     /* V33: entrada do despacho validada nesta versão */
+extern uint32_t g_ps2_ver_ok[];
+/* V39: perfil por função também nas chamadas C diretas da V33. Sem isto o
+ * tempo de uma função chamada direto ia para a última função DESPACHADA
+ * (achado A1 da revisão V37). Custa 2 leituras do relógio por chamada:
+ * só em build de medida -> make GEN_OPT="-O2 -DPS2_PROF_DIRETO=1". */
+#ifndef PS2_PROF_DIRETO
+#define PS2_PROF_DIRETO 0
+#endif
+#if PS2_PROF_DIRETO && defined(_EE)
+extern uint32_t g_ps2_prof_fn[], g_ps2_prof_t, g_ps2_prof_ult;
+static inline __attribute__((always_inline)) uint32_t ps2_prof_d_troca(uint32_t novo)
+{
+    uint32_t c, ant = g_ps2_prof_ult;
+    __asm__ volatile("mfc0 %0, $9" : "=r"(c));
+    g_ps2_prof_fn[ant] += c - g_ps2_prof_t;
+    g_ps2_prof_t = c;
+    g_ps2_prof_ult = novo;
+    return ant;
+}
+#define PS2_PROF_D_ENTRA(i) uint32_t _pu = ps2_prof_d_troca(i);
+#define PS2_PROF_D_SAI      (void)ps2_prof_d_troca(_pu);
+#else
+#define PS2_PROF_D_ENTRA(i)
+#define PS2_PROF_D_SAI
+#endif     /* V33: entrada do despacho validada nesta versão */
 void ps2_irq_poll_lento(struct CPUState *cpu, uint32_t pc);
 static inline __attribute__((always_inline)) void psx_check_interrupts_at(struct CPUState *cpu, uint32_t pc)
 {

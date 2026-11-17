@@ -50,6 +50,12 @@ for a in NATIVAS:
         s = s.replace(cab, cab + '''    { extern int ps2_nat_%s_gancho(CPUState *cpu);
       if (cpu->pc == 0u && ps2_nat_%s_gancho(cpu)) return; }
 ''' % (a, a), 1)
+# V37: entrada da espera do quadro (800296C4): mede o período entre quadros
+# (1 VBlank = ok; 2+ = o quadro perdeu o VBlank). runtime/nativo_ganchos.c
+cab = 'void func_800296C4(CPUState* restrict cpu)\n{\n'
+if cab in s:
+    s = s.replace(cab, cab + '    { extern void ps2_quadro_espera(void); if (cpu->pc == 0u) ps2_quadro_espera(); }\n', 1)
+
 # V36: o port ainda não tem som. O tick do sequenciador de som do jogo
 # (80088BA8, chamado na IRQ do timer 2) era ~18% do EE ("quente 80088c00")
 # calculando notas/volumes para nada. Com PS2_SOM_PULAR=1 (padrão,
@@ -93,10 +99,10 @@ if not ent.endswith('_dispatch.c') and 'CPS jal ->' in s:
                 return m.group(0)
             n_jal += 1
             return ('{ if (__builtin_expect(g_ps2_ver_ok[%du] == g_cod_ver, 1)) { uint32_t _v = g_cod_ver; '
-                    'cpu->pc = 0; func_%s(cpu); '
+                    'PS2_PROF_D_ENTRA(%du) cpu->pc = 0; func_%s(cpu); PS2_PROF_D_SAI '
                     'if (cpu->pc == 0x%su && g_cod_ver == _v) { cpu->pc = 0; psx_check_interrupts_at(cpu, 0x%su); goto block_%s; } '
                     'return; } cpu->pc = 0x%su; return; }  /* V33 jal direto -> 0x%s */'
-                    % (_IDX[alvo], alvo, r, r, r, alvo, alvo))
+                    % (_IDX[alvo], _IDX[alvo], alvo, r, r, r, alvo, alvo))
         partes[pi] = re.sub(r'cpu->pc = 0x([0-9A-F]{8})u; return;  /\* CPS jal -> 0x[0-9A-F]{8} \*/', _troca, corpo)
     s = ''.join(partes)
     sys.stderr.write('transformar_gerado: %d jal diretos\n' % n_jal)
@@ -178,8 +184,8 @@ void ps2_prof_funcoes(void)
 }''', 1)
     s = s.replace('/* ps2: cache direto na frente da busca binária', '''/* ps2: perfil por função (V22) */
 #include <stdio.h>
-static uint32_t g_ps2_prof_fn[PSX_GAME_DISPATCH_COUNT];
-static uint32_t g_ps2_prof_t, g_ps2_prof_ult;
+uint32_t g_ps2_prof_fn[PSX_GAME_DISPATCH_COUNT];   /* V39: globais (PS2_PROF_DIRETO) */
+uint32_t g_ps2_prof_t, g_ps2_prof_ult;
 /* ps2: cache direto na frente da busca binária''', 1)
 
     # 8. V31: despacho mais barato.
