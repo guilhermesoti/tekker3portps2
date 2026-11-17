@@ -1,0 +1,12 @@
+# Rotinas folha do Tekken 3 traduzidas para C nativo (tools/nativo.py).
+# inicio:fim (fim = slot de atraso do jr $ra). Uma por linha.
+80036CAC:80037810
+8003739C:80037810
+80037484:80037810
+8003B71C:8003B968
+8003B5C0:8003B718
+80037A9C:80037B24
+80081D68:80081E70
+80036AF8:80036C54
+8003A364:8003A45C
+800387C8:80038908

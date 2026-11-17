@@ -1,0 +1,27 @@
+# NUNCA publicar: dump do jogo e código derivado do jogo original
+*.bin
+*.cue
+*.iso
+gerado/
+disc/
+build*/
+*.o
+*.elf
+# executavel do jogo extraido do disco
+SLUS_*
+referencia/
+# logs locais do emulador
+ps2/docs/ultimo_log_pcsx2.txt
+ps2/vram_dump.bin
+
+# log do port (PCSX2/PS2 real)
+ps2/tekken3_log.txt
+*tekken3_log.txt
+
+# pacotes para avaliação externa
+entrega/
+
+# arquivos juntados para revisão por outras IAs
+codigo_limpo.txt
+codigo_ps2_puro.txt
+__pycache__/
